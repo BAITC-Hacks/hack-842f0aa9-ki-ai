@@ -8,6 +8,8 @@ import streamlit as st
 from ui.graph_view import ROLES, graph_html
 from ui.theme import apply_theme, header
 from ui.analytics_panels import prepare_panels, client_insights, stability_panel, removal_panel
+from ui.assistant_panel import assistant_panel
+from src.data_io import format_delivery_outputs
 
 ROOT = Path(__file__).resolve().parent
 DATA = Path(os.environ.get("MONEY_GRAPH_DATA", str(ROOT / "data")))
@@ -85,7 +87,8 @@ with st.container(key="overview"):
 if roles.empty or roles.role.isna().any():
     st.info("Байланыстар дайын. Рөлдер мен тексеру басымдығы есептеу нәтижелері қосылғанда көрсетіледі.")
 
-network_tab, top_tab, cluster_tab, export_tab = st.tabs(["Желі және клиент", "Тексеру басымдығы", "Кластерлер", "Жүктеу"])
+network_tab, top_tab, cluster_tab, assistant_tab, export_tab = st.tabs(
+    ["Желі және клиент", "Тексеру басымдығы", "Кластерлер", "Көмекші", "Жүктеу"])
 with network_tab:
     st.subheader("Байланыстар картасы")
     st.caption("Клиентті іздеңіз немесе желіні кластер мен рөл бойынша сүзіңіз.")
@@ -167,9 +170,11 @@ with top_tab:
 with cluster_tab:
     st.subheader("Желідегі топтар")
     st.dataframe(clusters, hide_index=True, width="stretch")
+with assistant_tab:
+    assistant_panel(OUT, selected)
 with export_tab:
     st.write("Пайплайн жасаған бастапқы CSV файлдары")
-    for name in SCHEMAS:
+    for name in [*SCHEMAS, "node_metrics"]:
         path = OUT / f"{name}.csv"
         if path.exists():
             st.download_button(f"{name}.csv жүктеу", path.read_bytes(), file_name=path.name, mime="text/csv")
@@ -177,8 +182,14 @@ with export_tab:
             st.caption(f"{name}.csv — әлі дайын емес")
     if not insights.empty:
         st.markdown("#### Қосымша аналитика")
-        for filename, table in [("node_insights.csv", insights), ("sensitivity_summary.csv", stability),
-                                ("sensitivity_scenarios.csv", sensitivity_scenarios)]:
-            st.download_button(filename, table.to_csv(index=False).encode("utf-8-sig"), file_name=filename, mime="text/csv")
+        for filename, table in format_delivery_outputs(insights, stability).items():
+            st.download_button(filename, table.to_csv(index=False).encode("utf-8"), file_name=filename, mime="text/csv")
+        st.download_button("sensitivity_scenarios.csv", sensitivity_scenarios.to_csv(index=False).encode("utf-8"),
+                           file_name="sensitivity_scenarios.csv", mime="text/csv")
+    else:
+        for filename in ("node_insights.csv", "ranking_stability.csv"):
+            path = OUT / filename
+            if path.is_file():
+                st.download_button(filename, path.read_bytes(), file_name=filename, mime="text/csv")
 
 st.markdown('<div class="footer-note">HACKALEM AI · Ақша графы<br>Нәтижелер — тексеруге арналған гипотезалар; адамның кінәсі туралы қорытынды емес. Көрсетілген сомалар тек бақыланған желіге қатысты.</div>', unsafe_allow_html=True)

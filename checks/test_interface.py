@@ -15,6 +15,7 @@ class InterfaceTests(unittest.TestCase):
     def test_upgraded_cards_stability_and_removal(self):
         from src.analysis import analyze
         from src.test_analysis import fixture
+        from src.data_io import build_delivery_outputs
 
         edges, nodes, transactions = fixture()
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {
@@ -22,13 +23,18 @@ class InterfaceTests(unittest.TestCase):
         }):
             for name, frame in (("nodes", nodes), ("edges", edges)):
                 frame.to_parquet(Path(tmp) / f"{name}.parquet")
-            for name, frame in zip(("nodes_roles", "clusters", "top_nodes", "node_metrics"),
-                                   analyze(edges, nodes, transactions)):
+            outputs = analyze(edges, nodes, transactions)
+            for name, frame in zip(("nodes_roles", "clusters", "top_nodes", "node_metrics"), outputs):
                 frame.to_csv(Path(tmp) / f"{name}.csv", index=False)
+            for name, frame in build_delivery_outputs(outputs[0], outputs[3]).items():
+                frame.to_csv(Path(tmp) / name, index=False)
             at = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
             self.assertFalse(at.exception)
             self.assertFalse(at.error)
-            self.assertEqual(len(at.get("download_button")), 6)
+            self.assertEqual(len(at.get("download_button")), 7)
+            labels = [button.label for button in at.get('download_button')]
+            self.assertIn('node_insights.csv', labels)
+            self.assertIn('ranking_stability.csv', labels)
             target = int(nodes.gid.iloc[1])
             at.text_input[0].set_value(str(target)).run()
             self.assertFalse(at.exception)
@@ -37,11 +43,25 @@ class InterfaceTests(unittest.TestCase):
             at.button(key="run_removal").click().run()
             self.assertFalse(at.exception)
             self.assertTrue(any(m.label == "Seed-тен жолы жоғалған" for m in at.metric))
-            self.assertEqual(len(at.get("download_button")), 7)
+            self.assertEqual(len(at.get("download_button")), 8)
             # A newly selected client must not display the previous simulation.
             at.text_input[0].set_value(str(int(nodes.gid.iloc[-1]))).run()
             self.assertFalse(any(m.label == "Seed-тен жолы жоғалған" for m in at.metric))
             self.assertFalse(at.exception)
+            at.chat_input[0].set_value(f'{target} туралы айт').run()
+            self.assertFalse(at.exception)
+            self.assertEqual(len(at.chat_message), 2)
+            self.assertTrue(any(f'gid={target}' in item.value for item in at.text))
+            self.assertTrue(any('ranking_stability.csv (gid=' in item.value for item in at.caption))
+            at.button(key='clear_assistant').click().run()
+            self.assertEqual(len(at.chat_message), 0)
+            at.chat_input[0].set_value('кім кінәлі?').run()
+            self.assertTrue(any('толық gid' in item.value for item in at.text))
+            # Changed output files invalidate old answers from a prior snapshot.
+            insight_path = Path(tmp) / 'node_insights.csv'
+            insight_path.write_bytes(insight_path.read_bytes() + b'\n')
+            at.run()
+            self.assertEqual(len(at.chat_message), 0)
 
     def test_workflow(self):
         with tempfile.TemporaryDirectory() as tmp:

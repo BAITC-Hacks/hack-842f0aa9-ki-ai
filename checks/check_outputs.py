@@ -61,8 +61,11 @@ def _require_columns(frame: pd.DataFrame, name: str) -> None:
 
 def _integer_series(series: pd.Series, label: str) -> pd.Series:
     numeric = pd.to_numeric(series, errors="coerce")
-    if numeric.isna().any() or not np.all(np.equal(numeric, np.floor(numeric))):
+    if (numeric.isna().any() or not np.isfinite(numeric).all()
+            or not np.all(np.equal(numeric, np.floor(numeric)))):
         _fail(f"{label} must contain integers without nulls")
+    if label.endswith('gid') and pd.api.types.is_float_dtype(numeric):
+        _fail(f"{label} must use exact integer ids, not floating point")
     return numeric.astype("int64")
 
 
@@ -155,6 +158,16 @@ def validate_outputs(
         _fail("clusters.sum_kzt_internal must contain finite non-negative values")
     _nonempty_text(clusters["top_gids"], "clusters.top_gids")
     _nonempty_text(clusters["hypothesis"], "clusters.hypothesis")
+    if (clusters['n_seed'].astype('int64') > clusters['n_nodes'].astype('int64')).any():
+        _fail('clusters.n_seed cannot exceed n_nodes')
+    membership = dict(zip(role_gids, cluster_ids, strict=True))
+    for row in clusters.itertuples(index=False):
+        try:
+            members = [int(value) for value in str(row.top_gids).split(';')]
+        except ValueError:
+            _fail('clusters.top_gids must contain semicolon-separated integer ids')
+        if len(members) != len(set(members)) or any(membership.get(gid) != row.cluster_id for gid in members):
+            _fail('clusters.top_gids must contain unique members of that cluster')
 
     observed_cluster_sizes = cluster_ids.value_counts().sort_index()
     declared_cluster_sizes = pd.Series(
@@ -262,6 +275,10 @@ def validate_delivery_outputs(roles, insights, stability):
         _fail('ranking_stability: invalid rank bounds')
     if values['top20_count'].sum() != 64 * min(20, len(roles)):
         _fail('ranking_stability: total top20 membership disagrees with 64 runs')
+    k = min(20, len(roles))
+    if ((values['top20_count'].gt(0) != values['rank_min'].le(k)) |
+            (values['top20_count'].eq(values['runs']) != values['rank_max'].le(k))).any():
+        _fail('ranking_stability: top20_count disagrees with rank bounds')
 
 
 def check_output_directory(out_dir: str | Path, data_dir: str | Path | None = None) -> dict[str, int]:

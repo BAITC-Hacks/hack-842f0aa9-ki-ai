@@ -411,7 +411,7 @@ removal = simulate_node_removal(edges, nodes, int(top.gid.iloc[0]))
 
 out = Path("out/analytics_upgrade")
 out.mkdir(parents=True, exist_ok=True)
-insights.to_csv(out / "node_insights.csv", index=False, encoding="utf-8")
+insights.to_csv(out / "node_insights_raw.csv", index=False, encoding="utf-8")
 for name, table in stability.items():
     table.to_csv(out / f"sensitivity_{name}.csv", index=False, encoding="utf-8")
 removal["network_changes"].to_csv(out / "removal_network_changes.csv",
