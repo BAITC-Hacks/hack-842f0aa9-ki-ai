@@ -1,0 +1,1 @@
+"""Money graph project package."""
