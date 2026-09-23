@@ -131,7 +131,9 @@ def validate_outputs(
     _score_series(nodes_roles["role_score"], "nodes_roles.role_score")
     _score_series(nodes_roles["priority_score"], "nodes_roles.priority_score")
     cluster_ids = _integer_series(nodes_roles["cluster_id"], "nodes_roles.cluster_id")
-    _nonempty_text(nodes_roles["evidence"], "nodes_roles.evidence", max_length=200)
+    evidence = _nonempty_text(nodes_roles["evidence"], "nodes_roles.evidence", max_length=200)
+    if not evidence.str.contains(r'\d', regex=True).all():
+        _fail('nodes_roles.evidence must include numeric evidence')
 
     metric_gids = _integer_series(node_metrics["gid"], "node_metrics.gid")
     if metric_gids.duplicated().any():
@@ -179,6 +181,9 @@ def validate_outputs(
     top_scores = _score_series(top_nodes["priority_score"], "top_nodes.priority_score")
     if not top_scores.is_monotonic_decreasing:
         _fail("top_nodes must be sorted by priority_score descending")
+    expected_scores = pd.to_numeric(nodes_roles['priority_score']).nlargest(len(top_nodes)).to_numpy()
+    if not np.allclose(top_scores.to_numpy(), expected_scores, rtol=0, atol=1e-12):
+        _fail('top_nodes does not contain the highest priority scores')
     _nonempty_text(top_nodes["why"], "top_nodes.why")
 
     roles_by_gid = nodes_roles.set_index(role_gids)
@@ -234,6 +239,31 @@ def validate_outputs(
     }
 
 
+def validate_delivery_outputs(roles, insights, stability):
+    expected_ids = set(_integer_series(roles['gid'], 'roles.gid'))
+    contracts = [(insights, 'node_insights', ['gid', 'reasons', 'limitations', 'next_step']),
+                 (stability, 'ranking_stability', ['gid', 'runs', 'top20_count', 'rank_min', 'rank_max'])]
+    for frame, name, columns in contracts:
+        if list(frame.columns) != columns:
+            _fail(f'{name}: expected columns {columns}')
+        ids = _integer_series(frame.gid, name + '.gid')
+        if ids.duplicated().any() or set(ids) != expected_ids:
+            _fail(f'{name}: gid must cover every client exactly once')
+    for col in ('reasons', 'limitations', 'next_step'):
+        _nonempty_text(insights[col], 'node_insights.' + col)
+    values = {col: _integer_series(stability[col], 'ranking_stability.' + col)
+              for col in ('runs', 'top20_count', 'rank_min', 'rank_max')}
+    if not values['runs'].eq(64).all():
+        _fail('ranking_stability.runs must be 64 (baseline excluded)')
+    if ((values['top20_count'] < 0) | (values['top20_count'] > values['runs'])).any():
+        _fail('ranking_stability: invalid top20_count')
+    if ((values['rank_min'] < 1) | (values['rank_max'] > len(roles)) |
+            (values['rank_min'] > values['rank_max'])).any():
+        _fail('ranking_stability: invalid rank bounds')
+    if values['top20_count'].sum() != 64 * min(20, len(roles)):
+        _fail('ranking_stability: total top20 membership disagrees with 64 runs')
+
+
 def check_output_directory(out_dir: str | Path, data_dir: str | Path | None = None) -> dict[str, int]:
     frames = _read_outputs(Path(out_dir))
     source_nodes = None
@@ -242,11 +272,15 @@ def check_output_directory(out_dir: str | Path, data_dir: str | Path | None = No
         data_path = Path(data_dir)
         source_nodes = pd.read_parquet(data_path / "nodes.parquet")
         source_edges = pd.read_parquet(data_path / "edges.parquet")
-    return validate_outputs(
+    summary = validate_outputs(
         **frames,
         source_nodes=source_nodes,
         source_edges=source_edges,
     )
+    validate_delivery_outputs(frames['nodes_roles'],
+        pd.read_csv(Path(out_dir) / 'node_insights.csv'),
+        pd.read_csv(Path(out_dir) / 'ranking_stability.csv'))
+    return summary
 
 
 def main() -> int:
