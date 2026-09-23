@@ -89,6 +89,21 @@ class TransportTests(unittest.TestCase):
                     generate_answer('Сұрақ', self.evidence, self.config)
 
     @patch('src.llm.requests.post')
+    def test_grouped_citations_are_accepted_but_unknown_refs_are_not(self, post):
+        evidence = self.evidence + [{'id': 'G1', 'recipients': []}]
+        for answer in ('Жауап [N1, G1]', 'Жауап [N1][G1]', 'Жауап [ N1; G1 ]'):
+            post.return_value = response(answer, ['N1', 'G1'])
+            self.assertEqual(generate_answer('Салыстыр', evidence, self.config)['citations'], ['N1', 'G1'])
+        post.return_value = response('Жауап [G1]', ['N1', 'G1'])
+        self.assertEqual(generate_answer('Салыстыр', evidence, self.config)['citations'], ['G1'])
+        post.return_value = response('Жауап [N1, G1]', ['N1'])
+        with self.assertRaises(AIError):
+            generate_answer('Салыстыр', evidence, self.config)
+        post.return_value = response('Жауап [N1, X9]', ['N1'])
+        with self.assertRaises(AIError):
+            generate_answer('Салыстыр', evidence, self.config)
+
+    @patch('src.llm.requests.post')
     def test_truncated_and_malformed_outputs_are_rejected(self, post):
         for body in ({'status': 'incomplete', 'output': []}, {'status': 'completed', 'output': []}):
             post.return_value = Mock(status_code=200, json=Mock(return_value=body))
