@@ -62,6 +62,20 @@ class InterfaceTests(unittest.TestCase):
             insight_path.write_bytes(insight_path.read_bytes() + b'\n')
             at.run()
             self.assertEqual(len(at.chat_message), 0)
+            # Exercise the real chat integration without spending API credit.
+            from checks.test_llm import response
+            at.text_input(key='ai_key_OpenAI').set_value('test-only-not-a-real-key')
+            at.toggle(key='ai_enabled').set_value(True).run()
+            with patch('src.llm.requests.post', return_value=response()) as post:
+                at.chat_input[0].set_value(f'{target} неге тексеру керек?').run()
+                post.assert_called_once()
+            self.assertFalse(at.exception)
+            self.assertTrue(any('ЖИ жауабы · OpenAI' in item.value for item in at.caption))
+            self.assertTrue(any('[N1]' in item.value for item in at.text))
+            self.assertEqual(len(at.json), 1)
+            at.button(key='forget_ai_keys').click().run()
+            self.assertFalse(at.toggle(key='ai_enabled').value)
+            self.assertEqual(at.text_input(key='ai_key_OpenAI').value, '')
 
     def test_workflow(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -171,7 +171,7 @@ with cluster_tab:
     st.subheader("Желідегі топтар")
     st.dataframe(clusters, hide_index=True, width="stretch")
 with assistant_tab:
-    assistant_panel(OUT, selected)
+    assistant_panel(OUT, selected, DATA)
 with export_tab:
     st.write("Пайплайн жасаған бастапқы CSV файлдары")
     for name in [*SCHEMAS, "node_metrics"]:
