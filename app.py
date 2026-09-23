@@ -7,6 +7,7 @@ import streamlit as st
 
 from ui.graph_view import ROLES, graph_html
 from ui.theme import apply_theme, header
+from ui.analytics_panels import prepare_panels, client_insights, stability_panel, removal_panel
 
 ROOT = Path(__file__).resolve().parent
 DATA = Path(os.environ.get("MONEY_GRAPH_DATA", str(ROOT / "data")))
@@ -54,6 +55,13 @@ roles, clusters, top = (tables[name] for name in SCHEMAS)
 nodes = read_table(DATA / "nodes.parquet", ["gid", "depth", "is_seed"])
 edges = read_table(DATA / "edges.parquet", ["src", "dst", "sum_kzt", "n_tx"])
 metrics = read_table(OUT / "node_metrics.csv", ["gid"])
+insights, stability, sensitivity_scenarios = (pd.DataFrame() for _ in range(3))
+if not roles.empty and not metrics.empty:
+    try:
+        with st.spinner("Түсіндірмелер мен рейтинг тұрақтылығы дайындалуда…"):
+            insights, stability, sensitivity_scenarios = prepare_panels(roles, metrics)
+    except (ValueError, KeyError) as exc:
+        st.warning(f"Қосымша аналитикаға толық, өзара сәйкес нәтижелер қажет: {exc}")
 
 if nodes.empty and roles.empty:
     st.info("Деректер әлі қосылмаған. data/ қалтасына Parquet файлдарын, out/ қалтасына пайплайн нәтижелерін салыңыз.")
@@ -109,6 +117,7 @@ with network_tab:
         score = record.get("priority_score")
         if pd.notna(score):
             st.caption(f"Тексеру басымдығы: {score:.3f} · Кластер: {record.get('cluster_id')}")
+            client_insights(selected, record, insights, stability)
         if record.get("depth") == 4 and outgoing.empty:
             st.warning("4-қадамда дерек жинау тоқтаған. Шығыстың болмауы ақшаның осы клиентте қалғанын дәлелдемейді.")
         st.caption("Тек таңдаманың ішіндегі аударымдар көрсетілген; бұл толық шот балансы емес.")
@@ -144,6 +153,7 @@ with network_tab:
     if selected is not None:
         with st.expander("Клиентке қатысты барлық аударым байланыстары"):
             st.dataframe(edges[(edges.src == selected) | (edges.dst == selected)], hide_index=True)
+        removal_panel(selected, edges, nodes)
 
 with top_tab:
     st.subheader("Бірінші тексерілетін клиенттер")
@@ -153,6 +163,7 @@ with top_tab:
         st.dataframe(top.sort_values("rank"), hide_index=True, width="stretch")
         if len(top) < 20:
             st.warning("ТЗ бойынша топ-листте кемінде 20 клиент болуы керек.")
+        stability_panel(top, stability, sensitivity_scenarios)
 with cluster_tab:
     st.subheader("Желідегі топтар")
     st.dataframe(clusters, hide_index=True, width="stretch")
@@ -164,5 +175,10 @@ with export_tab:
             st.download_button(f"{name}.csv жүктеу", path.read_bytes(), file_name=path.name, mime="text/csv")
         else:
             st.caption(f"{name}.csv — әлі дайын емес")
+    if not insights.empty:
+        st.markdown("#### Қосымша аналитика")
+        for filename, table in [("node_insights.csv", insights), ("sensitivity_summary.csv", stability),
+                                ("sensitivity_scenarios.csv", sensitivity_scenarios)]:
+            st.download_button(filename, table.to_csv(index=False).encode("utf-8-sig"), file_name=filename, mime="text/csv")
 
 st.markdown('<div class="footer-note">HACKALEM AI · Ақша графы<br>Нәтижелер — тексеруге арналған гипотезалар; адамның кінәсі туралы қорытынды емес. Көрсетілген сомалар тек бақыланған желіге қатысты.</div>', unsafe_allow_html=True)
