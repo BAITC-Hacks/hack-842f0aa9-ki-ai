@@ -251,8 +251,8 @@ def _evidence(row):
     return text
 
 
-def _priority(frame):
-    inputs = {
+def _priority_inputs(frame):
+    return {
         "flow": _scale(frame.in_kzt + frame.out_kzt),
         "transactions": _scale(frame.in_tx + frame.out_tx),
         "degree": _scale(frame.in_deg + frame.out_deg),
@@ -260,6 +260,10 @@ def _priority(frame):
         "bridge": _scale(frame.betweenness),
         "role": frame.role_score.where(frame.role.ne("peripheral"), 0),
     }
+
+
+def _priority(frame):
+    inputs = _priority_inputs(frame)
     for name, weight in PRIORITY_WEIGHTS.items():
         frame[f"priority_{name}"] = weight * inputs[name]
     frame["priority_score"] = frame[
@@ -322,3 +326,71 @@ def analyze(edges, nodes, transactions):
     node_metrics.attrs["thresholds"] = thresholds
     node_metrics.attrs["random_seed"] = RANDOM_SEED
     return nodes_roles, clusters, top_nodes, node_metrics
+
+
+def _join_results(nodes_roles, node_metrics):
+    """Validate and join a complete analysis snapshot by integer gid."""
+    numeric = (
+        "depth", "in_deg", "out_deg", "in_kzt", "out_kzt", "in_tx", "out_tx",
+        "pagerank", "betweenness", "external_clusters", "near_inflow_out_share",
+    )
+    flags = ("is_seed", "is_isolated", "truncated_by_depth")
+    for name, frame, columns in (
+        ("nodes_roles", nodes_roles, ROLE_COLUMNS),
+        ("node_metrics", node_metrics, ["gid", *numeric, *flags]),
+    ):
+        if not frame.columns.is_unique:
+            raise ValueError(f"{name}: duplicate column names")
+        missing = set(columns) - set(frame.columns)
+        if missing:
+            raise ValueError(f"{name}: missing columns {sorted(missing)}")
+        if frame.empty or frame[columns].isna().any().any():
+            raise ValueError(f"{name}: empty frame or missing values")
+        if not is_integer_dtype(frame.gid.dtype) or is_bool_dtype(frame.gid.dtype):
+            raise ValueError(f"{name}.gid must have integer dtype")
+        if frame.gid.duplicated().any():
+            raise ValueError(f"{name}.gid must be unique")
+    if set(nodes_roles.gid) != set(node_metrics.gid):
+        raise ValueError("nodes_roles and node_metrics must contain the same gids")
+    if not nodes_roles.role.isin(ROLES).all():
+        raise ValueError("Unknown role")
+    for col in ("role_score", "priority_score"):
+        values = nodes_roles[col]
+        if (not is_numeric_dtype(values.dtype) or not np.isfinite(values).all()
+                or not values.between(0, 1).all()):
+            raise ValueError(f"{col} must be finite and in [0, 1]")
+    for col in numeric:
+        values = node_metrics[col]
+        if (not is_numeric_dtype(values.dtype) or is_bool_dtype(values.dtype)
+                or not np.isfinite(values).all() or values.lt(0).any()):
+            raise ValueError(f"node_metrics.{col} must be finite and nonnegative")
+    for col in ("depth", "in_deg", "out_deg", "in_tx", "out_tx", "external_clusters"):
+        if not is_integer_dtype(node_metrics[col].dtype):
+            raise ValueError(f"node_metrics.{col} must have integer dtype")
+    for col in flags:
+        if not is_bool_dtype(node_metrics[col].dtype):
+            raise ValueError(f"node_metrics.{col} must have boolean dtype")
+    m = node_metrics
+    if not m.depth.between(0, MAX_DEPTH).all() or not m.is_seed.eq(m.depth.eq(0)).all():
+        raise ValueError("Inconsistent depth/is_seed flags")
+    if not m.is_isolated.eq((m.in_deg + m.out_deg).eq(0)).all():
+        raise ValueError("Inconsistent is_isolated flag")
+    if not m.truncated_by_depth.eq(m.depth.eq(MAX_DEPTH) & m.out_deg.eq(0)).all():
+        raise ValueError("Inconsistent truncated_by_depth flag")
+    if not m.near_inflow_out_share.between(0, 1 + 1e-12).all():
+        raise ValueError("near_inflow_out_share must be in [0, 1]")
+    return nodes_roles[ROLE_COLUMNS].merge(
+        m[["gid", *numeric, *flags]], on="gid", validate="one_to_one"
+    ).sort_values("gid").reset_index(drop=True)
+
+
+def priority_features(nodes_roles, node_metrics):
+    """Return gid and the six normalized, unweighted priority components.
+
+    Uses exactly the same normalization as analyze(). No input is modified.
+    """
+    joined = _join_results(nodes_roles, node_metrics)
+    features = pd.DataFrame(_priority_inputs(joined))
+    features.loc[joined.is_isolated, :] = 0.
+    features.insert(0, "gid", joined.gid)
+    return features
