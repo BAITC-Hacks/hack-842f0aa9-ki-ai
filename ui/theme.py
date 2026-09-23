@@ -68,6 +68,10 @@ def apply_theme():
     .legend-dot { width: 7px; height: 7px; border-radius: 50%; }
     .footer-note { font-size: 11px; color: #718077; margin-top: 24px;
         padding-top: 18px; border-top: 1px solid #dfe7e1; line-height: 1.7; }
+    .insight-card { background: white; border: 1px solid #dce6df; border-radius: 16px;
+        padding: 20px; height: 100%; border-top: 3px solid #16853b; }
+    .insight-card h4 { color: #176d33; margin: 0 0 12px; padding: 0; font-size: 16px; }
+    .insight-card p { color: #45614e; font-size: 14px; line-height: 1.75; margin: 0; }
     @media (max-width: 1050px) {
         .st-key-overview [data-testid="stHorizontalBlock"] { flex-wrap: wrap; }
         .st-key-overview [data-testid="stColumn"] { min-width: calc(50% - 1rem); flex: 1; }
