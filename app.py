@@ -6,6 +6,7 @@ import pandas as pd
 import streamlit as st
 
 from ui.graph_view import ROLES, graph_html
+from ui.theme import apply_theme, header
 
 ROOT = Path(__file__).resolve().parent
 DATA = Path(os.environ.get("MONEY_GRAPH_DATA", str(ROOT / "data")))
@@ -45,19 +46,8 @@ def read_table(path, required):
 
 
 st.set_page_config(page_title="Ақша графы", page_icon="◈", layout="wide", initial_sidebar_state="collapsed")
-st.markdown("""<style>
-[data-testid="stMetric"] {border: 1px solid #94a3b855; padding: 16px; border-radius: 14px;}
-.block-container {padding-top: 4rem;}
-</style>""", unsafe_allow_html=True)
-st.caption("HACKALEM AI / ҚАРЖЫ ЖЕЛІСІН ТАЛДАУ")
-st.title("Ақша графы")
-st.write("Байланыстарды зерттеңіз. Тексеру басымдығын дәлелдермен бағалаңыз.")
-st.caption("Нәтижелер — тексеруге арналған гипотезалар; адамның кінәсі туралы қорытынды емес.")
-
-with st.sidebar:
-    st.header("Басқару")
-    st.button("Нәтижелерді жаңарту")
-    st.caption("Деректер әр әрекетте дискіден қайта оқылады.")
+apply_theme()
+header()
 
 tables = {name: read_table(OUT / f"{name}.csv", cols) for name, cols in SCHEMAS.items()}
 roles, clusters, top = (tables[name] for name in SCHEMAS)
@@ -76,16 +66,21 @@ view = base.merge(roles, on="gid", how="outer", suffixes=("", "_result"))
 if not metrics.empty:
     extra = [c for c in metrics.columns if c == "gid" or c not in view.columns]
     view = view.merge(metrics[extra], on="gid", how="left")
+overview_label, refresh = st.columns([3, 1])
+overview_label.markdown('<p class="section-kicker">ЖЕЛІГЕ ШОЛУ</p>', unsafe_allow_html=True)
+refresh.button("↻ Жаңарту", width="stretch")
+with st.container(key="overview"):
+    cols = st.columns(4)
+    for col, label, value in zip(cols, ["Клиент", "Байланыс", "Кластер", "Бақыланған айналым, ₸"],
+                                  [len(view), len(edges), len(clusters), f"{edges.sum_kzt.sum():,.0f}"]):
+        col.metric(label, value)
 if roles.empty or roles.role.isna().any():
-    st.info("Рөлдер толық есептелмеген. Қазір бастапқы байланыстарды зерттеуге болады.")
-
-cols = st.columns(2) + st.columns(2)
-for col, label, value in zip(cols, ["Клиент", "Байланыс", "Кластер", "Бақыланған айналым, ₸"],
-                              [len(view), len(edges), len(clusters), f"{edges.sum_kzt.sum():,.0f}"]):
-    col.metric(label, value)
+    st.info("Байланыстар дайын. Рөлдер мен тексеру басымдығы есептеу нәтижелері қосылғанда көрсетіледі.")
 
 network_tab, top_tab, cluster_tab, export_tab = st.tabs(["Желі және клиент", "Тексеру басымдығы", "Кластерлер", "Жүктеу"])
 with network_tab:
+    st.subheader("Байланыстар картасы")
+    st.caption("Клиентті іздеңіз немесе желіні кластер мен рөл бойынша сүзіңіз.")
     search = st.text_input("Клиентті gid арқылы іздеу", placeholder="Клиент идентификаторы")
     selected = None
     if search.strip():
@@ -130,7 +125,9 @@ with network_tab:
             filtered = filtered[filtered.cluster_id == cluster]
         if role != "Барлығы":
             filtered = filtered[filtered.role == role]
-    st.markdown(" ".join(f'<span style="color:{color}">● {label}</span>&nbsp; ' for label, color in ROLES.values()), unsafe_allow_html=True)
+    legend = "".join(f'<span class="legend-item"><i class="legend-dot" style="background:{color}"></i>{label}</span>' for label, color in ROLES.values())
+    legend += '<span class="legend-item"><i class="legend-dot" style="background:#a7b8ad"></i>Есептелмеген</span>'
+    st.markdown(f'<div class="legend">{legend}</div>', unsafe_allow_html=True)
     st.caption("Түйіндегі gid қысқартылған; толық нөмірін көру үшін меңзерді түйінге апарыңыз.")
     limit = st.select_slider("Графтағы түйіндер шегі", options=[100, 250, 500, 2500], value=250)
     if len(filtered) > limit:
@@ -167,3 +164,5 @@ with export_tab:
             st.download_button(f"{name}.csv жүктеу", path.read_bytes(), file_name=path.name, mime="text/csv")
         else:
             st.caption(f"{name}.csv — әлі дайын емес")
+
+st.markdown('<div class="footer-note">HACKALEM AI · Ақша графы<br>Нәтижелер — тексеруге арналған гипотезалар; адамның кінәсі туралы қорытынды емес. Көрсетілген сомалар тек бақыланған желіге қатысты.</div>', unsafe_allow_html=True)
