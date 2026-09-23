@@ -176,8 +176,9 @@ def save_outputs(
     clusters: pd.DataFrame,
     top_nodes: pd.DataFrame,
     node_metrics: pd.DataFrame,
+    extra_outputs: dict[str, pd.DataFrame] | None = None,
 ) -> None:
-    """Save the four agreed result tables using stable UTF-8 CSV output."""
+    """Save the result tables using stable UTF-8 CSV output."""
 
     output_path = Path(out_dir)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -187,5 +188,31 @@ def save_outputs(
         "top_nodes.csv": top_nodes,
         "node_metrics.csv": node_metrics,
     }
+    for name, frame in (extra_outputs or {}).items():
+        if Path(name).name != name or not name.endswith('.csv') or name in outputs:
+            raise DataValidationError(f'Invalid extra output name: {name}')
+        outputs[name] = frame
     for filename, frame in outputs.items():
         frame.to_csv(output_path / filename, index=False, encoding="utf-8")
+
+
+def format_delivery_outputs(insights: pd.DataFrame, summary: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    """Use one CSV contract for both pipeline files and UI downloads."""
+    insights = insights.rename(columns={
+        'review_reason_kz': 'reasons', 'missing_data_kz': 'limitations',
+        'next_step_kz': 'next_step',
+    })[['gid', 'reasons', 'limitations', 'next_step']].copy()
+    stability = summary.rename(columns={
+        'scenario_count': 'runs', 'top_k_count': 'top20_count',
+        'best_rank': 'rank_min', 'worst_rank': 'rank_max',
+    })[['gid', 'runs', 'top20_count', 'rank_min', 'rank_max']].copy()
+    return {'node_insights.csv': insights, 'ranking_stability.csv': stability}
+
+
+def build_delivery_outputs(nodes_roles: pd.DataFrame, node_metrics: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    """Compute extra analytics and adapt them to the delivery CSV contract."""
+    from src.insights import build_node_insights
+    from src.scenarios import analyze_weight_sensitivity
+    insights = build_node_insights(nodes_roles, node_metrics)
+    sensitivity = analyze_weight_sensitivity(nodes_roles, node_metrics)
+    return format_delivery_outputs(insights, sensitivity['summary'])

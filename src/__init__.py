@@ -1,1 +1,1 @@
-"""Money graph project package."""
+"""Financial network analytics for the Money Graph case."""

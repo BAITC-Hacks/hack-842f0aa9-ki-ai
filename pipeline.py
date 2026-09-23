@@ -10,8 +10,9 @@ from pathlib import Path
 
 import pandas as pd
 
-from checks.check_outputs import validate_outputs
+from checks.check_outputs import validate_outputs, validate_delivery_outputs
 from src.data_io import DataValidationError, load_data, save_outputs, validate_input_data
+from src.data_io import build_delivery_outputs
 
 
 def _load_analyzer():
@@ -56,12 +57,15 @@ def run_pipeline(data_dir: str | Path, out_dir: str | Path) -> dict[str, float |
         source_nodes=nodes,
         source_edges=edges,
     )
+    extras = build_delivery_outputs(nodes_roles, node_metrics)
+    validate_delivery_outputs(nodes_roles, extras['node_insights.csv'], extras['ranking_stability.csv'])
     save_outputs(
         out_dir,
         nodes_roles=nodes_roles,
         clusters=clusters,
         top_nodes=top_nodes,
         node_metrics=node_metrics,
+        extra_outputs=extras,
     )
 
     elapsed = time.perf_counter() - started
